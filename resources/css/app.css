@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* Basis-Styling für Labels */
+  .form-label {
+      @apply block text-sm font-medium leading-6 text-gray-900 dark:text-gray-200 mb-1;
+  }
+
+  /* Basis-Styling für Input, Textarea, Select */
+  .form-input-field, .form-textarea-field, .form-select-field {
+      @apply block w-full rounded-md border-0 py-1.5 px-3 shadow-sm ring-1 ring-inset ring-gray-300 dark:ring-gray-600
+             placeholder:text-gray-400 dark:placeholder:text-gray-500
+             focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:focus:ring-indigo-500
+             sm:text-sm sm:leading-6
+             bg-white dark:bg-gray-100 /* Heller Hintergrund */
+             text-gray-900 dark:text-gray-900; /* Dunkler Text */
+  }
+  /* Spezifisches Styling für Time/Datetime Inputs (etwas kleiner) */
+  .form-input-field[type="datetime-local"], .form-input-field[type="time"] {
+      @apply p-1 text-xs w-full;
+  }
+  .form-textarea-field {
+      @apply leading-relaxed; /* Besserer Zeilenabstand */
+  }
+
+  /* Checkbox Styling */
+  .form-checkbox-field {
+      @apply h-4 w-4 rounded border-gray-300 dark:border-gray-500
+             text-indigo-600 dark:text-indigo-500
+             focus:ring-indigo-600 dark:focus:ring-indigo-500 dark:focus:ring-offset-gray-900
+             bg-white dark:bg-gray-200 /* Hellerer Checkbox Hintergrund */
+             dark:checked:bg-indigo-500 checked:bg-indigo-600;
+  }
+
+  /* Fehler Styling */
+  .form-error {
+      @apply mt-1 text-sm text-red-600 dark:text-red-400;
+  }
+
+  /* Styling für Boxen mit Inhalten (Genres, Zeiten, Barrierefreiheit) */
+  .form-content-box {
+       @apply rounded-md border border-gray-300 dark:border-gray-700 p-3 bg-white dark:bg-gray-100; /* Heller Hintergrund für Box */
+  }
+   /* Sicherstellen, dass Texte IN der Box dunkel sind */
+   .form-content-box label, .form-content-box span, .form-content-box p, .form-content-box div, .form-content-box fieldset, .form-content-box legend {
+      @apply text-gray-800 dark:text-gray-800;
+   }
+   /* Styling für Inputs/Checkboxes IN der Box (optional, für Kontrast) */
+   .form-content-box .form-input-field,
+   .form-content-box .form-textarea-field,
+   .form-content-box .form-select-field {
+        @apply dark:ring-gray-400 dark:border-gray-400 dark:bg-white; /* Weißer Input BG in heller Box */
+   }
+   .form-content-box .form-checkbox-field {
+        @apply dark:bg-gray-200 dark:border-gray-400; /* Heller Checkbox BG in heller Box */
+   }
+   .form-content-box label {
+       /* Kein extra Margin für Labels direkt in der Box */
+       @apply mb-0;
+   }
+
+  /* Button Styles (optional, aber nützlich global) */
+  .btn-primary {
+      @apply inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900;
+  }
+  .btn-secondary {
+      @apply inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 shadow-sm text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900;
+  }
+}
+
+.leaflet-tile-pane {
+    /* Standard Darstellung */
+    filter: none;
+    transition: filter 0.3s ease-in-out; /* Sanfter Übergang */
+}
+
+html.dark .leaflet-tile-pane {
+    /* Dark Mode Filter für OSM Tiles */
+    filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+/* Optional: Popups im Dark Mode anpassen */
+html.dark .leaflet-popup-content-wrapper,
+html.dark .leaflet-popup-tip {
+    background-color: #1f2937; /* dark:bg-gray-800 */
+    color: #f3f4f6; /* dark:text-gray-100 */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+html.dark .leaflet-popup-close-button {
+    color: #d1d5db; /* dark:text-gray-300 */
+}
+html.dark .leaflet-popup-close-button:hover {
+     background-color: #374151; /* dark:bg-gray-700 */
+     color: #f3f4f6; /* dark:text-gray-100 */
+}
+
+/* Optional: Popup Links im Dark Mode */
+html.dark .leaflet-popup-content a {
+    color: #818cf8; /* dark:text-indigo-400 */
+}
+html.dark .leaflet-popup-content a:hover {
+     color: #6366f1; /* dark:text-indigo-500 */
+}
+
+.leaflet-layer,
+.leaflet-control-zoom-in,
+.leaflet-control-zoom-out,
+.leaflet-control-attribution {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
