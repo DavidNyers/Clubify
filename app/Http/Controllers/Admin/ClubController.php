@@ -6,24 +6,28 @@ use App\Http\Controllers\Controller;
 use App\Models\Club;
 use App\Models\Genre;
 use App\Models\User;
-use App\Models\ClubImage; 
+use App\Models\ClubImage; // Model für Galeriebilder
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
-use Intervention\Image\ImageManager;
-use Intervention\Image\Drivers\Gd\Driver as GdDriver;
-use Countries;
+use Intervention\Image\ImageManager; // Intervention Image v3
+use Intervention\Image\Drivers\Gd\Driver as GdDriver; // GD Treiber
+// use Intervention\Image\Drivers\Imagick\Driver as ImagickDriver; // Falls Imagick genutzt wird
+use Countries; // Für die Länderliste
 
 class ClubController extends Controller
 {
+    /**
+     * Display a listing of the resource.
+     */
     public function index(Request $request)
     {
         $searchName = $request->input('search_name');
         $searchCity = $request->input('search_city');
 
-        $query = Club::with('owner'); // Lade Owner-Relation direkt mit (Eager Loading)
+        $query = Club::with('owner')->orderBy('name');
 
         if ($searchName) {
             $query->where('name', 'LIKE', '%' . $searchName . '%');
@@ -32,147 +36,217 @@ class ClubController extends Controller
             $query->where('city', 'LIKE', '%' . $searchCity . '%');
         }
 
-        $clubs = $query->orderBy('name')->paginate(15);
-
-        return view('admin.clubs.index', compact('clubs')); // Suchbegriffe sind im Request
+        $clubs = $query->paginate(15);
+        return view('admin.clubs.index', compact('clubs'));
     }
 
-     public function show(Club $club)
-    {
-        return redirect()->route('admin.clubs.edit', $club);
-    }
-
-    public function destroy(Club $club)
-    {
-         // Vorsicht: Was passiert mit Events, die diesem Club zugeordnet sind?
-         // Ggf. vorher prüfen oder Verknüpfung in Events auf null setzen lassen (abhängig von DB Constraints)
-        try {
-            $club->delete();
-            return redirect()->route('admin.clubs.index')
-                             ->with('success', 'Club erfolgreich gelöscht.');
-        } catch (\Exception $e) {
-            report($e);
-            return redirect()->route('admin.clubs.index')
-                             ->with('error', 'Club konnte nicht gelöscht werden (möglicherweise noch verknüpfte Events?).');
-        }
-    }
-
+    /**
+     * Show the form for creating a new resource.
+     */
     public function create()
     {
         $genres = Genre::orderBy('name')->get();
         $clubOwners = User::role('ClubOwner')->orderBy('name')->get();
-        // Länderliste holen (Code => Name)
-        $countries = Countries::getList(app()->getLocale()); // Oder 'de' fest codieren
+        $countries = collect(Countries::getList(app()->getLocale()))->sort()->all();
 
-        return view('admin.clubs.create', compact('genres', 'clubOwners', 'countries'));
+        // Für die strukturierte Formularanzeige der JSON-Felder (leere Werte für Create)
+        $openingHoursStructured = $this->decodeOpeningHours(null);
+        $accessibilityStructured = $this->decodeAccessibility(null);
+
+        return view('admin.clubs.create', compact('genres', 'clubOwners', 'countries', 'openingHoursStructured', 'accessibilityStructured'));
     }
 
+    /**
+     * Store a newly created resource in storage.
+     */
     public function store(Request $request)
     {
         $validatedData = $request->validate($this->validationRules());
 
-        // Manuelle Verarbeitung der strukturierten Daten VOR der Validierung der JSON-Strings
-        $processedData = $this->processStructuredFields($request);
-        $validatedData = array_merge($validatedData, $processedData); // Füge verarbeitete Daten hinzu
+        $processedJson = $this->processJsonFields($request); // JSON-Felder verarbeiten
+        $validatedData['opening_hours'] = $processedJson['opening_hours'];
+        $validatedData['accessibility_features'] = $processedJson['accessibility_features'];
 
-        // JSON Felder validieren (jetzt gegen das aufbereitete Array)
-        $validatedData = $this->validateJsonData($validatedData);
-         if (isset($validatedData['json_error'])) {
-            return back()->withErrors(['*_json' => $validatedData['json_error']])->withInput();
-        }
-
-
-        // Checkboxen behandeln
-        $validatedData['is_active'] = $request->boolean('is_active');
-        $validatedData['is_verified'] = $request->boolean('is_verified');
-
-        // Entferne die temporären strukturierten Felder aus den zu speichernden Daten
-        unset($validatedData['opening_hours_structured'], $validatedData['accessibility_structured']);
-
+        $validatedData['is_active'] = $request->boolean('is_active', true);
+        $validatedData['is_verified'] = $request->boolean('is_verified', false);
 
         DB::beginTransaction();
         try {
-            $club = Club::create($validatedData); // Enthält jetzt die korrekten 'opening_hours' und 'accessibility_features' JSONs
+            $club = Club::create($validatedData);
 
-            // Genre-Beziehung synchronisieren
-            $club->genres()->sync($request->input('genres', [])); // Default auf leeres Array
+            // Galeriebilder verarbeiten und speichern
+            if ($request->hasFile('gallery_images')) {
+                $imageManager = new ImageManager(new GdDriver());
+                foreach ($request->file('gallery_images') as $imageFile) {
+                    if ($imageFile->isValid()) {
+                        $originalName = $imageFile->getClientOriginalName();
+                        $filename = time() . '_' . uniqid() . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.webp';
+                        $directory = 'club-gallery/' . $club->id;
+                        $path = $directory . '/' . $filename;
 
+                        $img = $imageManager->read($imageFile->getRealPath());
+                        $img->resize(1200, null, function ($constraint) {
+                            $constraint->aspectRatio(); $constraint->upsize();
+                        });
+                        $encodedImage = $img->toWebp(80);
+                        Storage::disk('public')->put($path, (string) $encodedImage);
+
+                        $club->galleryImages()->create([
+                            'path' => $path,
+                            'original_name' => $originalName,
+                            'mime_type' => 'image/webp', // Da wir es zu WebP konvertieren
+                            'size' => strlen((string) $encodedImage),
+                        ]);
+                    }
+                }
+            }
+
+            $club->genres()->sync($request->input('genres', []));
             DB::commit();
-            return redirect()->route('admin.clubs.index')
-                             ->with('success', 'Club erfolgreich erstellt.');
+            return redirect()->route('admin.clubs.index')->with('success', 'Club erfolgreich erstellt.');
 
         } catch (\Exception $e) {
             DB::rollBack();
+             if (isset($club) && $club->id && Storage::disk('public')->exists('club-gallery/' . $club->id)) {
+                 Storage::disk('public')->deleteDirectory('club-gallery/' . $club->id);
+             }
             report($e);
-            return back()->with('error', 'Fehler beim Erstellen des Clubs: '.$e->getMessage())->withInput();
+            return back()->with('error', 'Fehler beim Erstellen des Clubs: ' . $e->getMessage())->withInput();
         }
     }
 
+    /**
+     * Display the specified resource. (Usually redirects to edit for admin)
+     */
+    public function show(Club $club)
+    {
+        return redirect()->route('admin.clubs.edit', $club);
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     */
     public function edit(Club $club)
     {
         $genres = Genre::orderBy('name')->get(['id', 'name']);
         $clubOwners = User::role('ClubOwner')->orderBy('name')->get(['id', 'name', 'email']);
-        $countries = collect(Countries::getList(app()->getLocale()))->sort()->all();    
-        $club->load(['genres:id', 'galleryImages']);
+        $countries = collect(Countries::getList(app()->getLocale()))->sort()->all();
+        $club->load(['genres:id', 'galleryImages']); // Galeriebilder laden
 
-        // Dekodiere JSON für das Formular
         $openingHoursStructured = $this->decodeOpeningHours($club->opening_hours);
         $accessibilityStructured = $this->decodeAccessibility($club->accessibility_features);
 
-
         return view('admin.clubs.edit', compact(
-            'club',
-            'genres',
-            'clubOwners',
-            'countries',
-            'openingHoursStructured', 
-            'accessibilityStructured' 
+            'club', 'genres', 'clubOwners', 'countries',
+            'openingHoursStructured', 'accessibilityStructured'
+            // $club->galleryImages ist jetzt verfügbar in der View
         ));
     }
 
+    /**
+     * Update the specified resource in storage.
+     */
     public function update(Request $request, Club $club)
     {
         $validatedData = $request->validate($this->validationRules($club->id));
 
-        // Manuelle Verarbeitung der strukturierten Daten VOR der Validierung der JSON-Strings
-        $processedData = $this->processStructuredFields($request);
-        $validatedData = array_merge($validatedData, $processedData);
+        $processedJson = $this->processJsonFields($request);
+        $validatedData['opening_hours'] = $processedJson['opening_hours'];
+        $validatedData['accessibility_features'] = $processedJson['accessibility_features'];
 
-         // JSON Felder validieren (jetzt gegen das aufbereitete Array)
-        $validatedData = $this->validateJsonData($validatedData);
-        if (isset($validatedData['json_error'])) {
-            return back()->withErrors(['*_json' => $validatedData['json_error']])->withInput();
-        }
-
-        // Checkboxen behandeln
         $validatedData['is_active'] = $request->boolean('is_active');
         $validatedData['is_verified'] = $request->boolean('is_verified');
-
-         // Entferne die temporären strukturierten Felder
-        unset($validatedData['opening_hours_structured'], $validatedData['accessibility_structured']);
 
         DB::beginTransaction();
         try {
             $club->update($validatedData);
 
-            // Genre-Beziehung synchronisieren
-            $club->genres()->sync($request->input('genres', []));
+            // Neue Galeriebilder hinzufügen
+            if ($request->hasFile('gallery_images')) {
+                $imageManager = new ImageManager(new GdDriver());
+                foreach ($request->file('gallery_images') as $imageFile) {
+                    if ($imageFile->isValid()) {
+                        $originalName = $imageFile->getClientOriginalName();
+                        $filename = time() . '_' . uniqid() . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.webp';
+                        $directory = 'club-gallery/' . $club->id;
+                        $path = $directory . '/' . $filename;
 
+                        $img = $imageManager->read($imageFile->getRealPath());
+                        $img->resize(1200, null, fn($c) => $c->aspectRatio()->upsize());
+                        $encodedImage = $img->toWebp(80);
+                        Storage::disk('public')->put($path, (string) $encodedImage);
+
+                        $club->galleryImages()->create([
+                            'path' => $path,
+                            'original_name' => $originalName,
+                            'mime_type' => 'image/webp',
+                            'size' => strlen((string) $encodedImage),
+                        ]);
+                    }
+                }
+            }
+
+            // Markierte Bilder löschen
+            if ($request->has('delete_images')) {
+                foreach ($request->input('delete_images') as $imageIdToDelete) {
+                    $imageRecord = ClubImage::find($imageIdToDelete);
+                    if ($imageRecord && $imageRecord->club_id == $club->id) { // Sicherheit
+                        if (Storage::disk('public')->exists($imageRecord->path)) {
+                            Storage::disk('public')->delete($imageRecord->path);
+                            // Optional: Thumbnails löschen, falls vorhanden und andere Pfade gespeichert
+                        }
+                        $imageRecord->delete();
+                    }
+                }
+            }
+
+            $club->genres()->sync($request->input('genres', []));
             DB::commit();
-            return redirect()->route('admin.clubs.index')
-                             ->with('success', 'Club erfolgreich aktualisiert.');
+            return redirect()->route('admin.clubs.index')->with('success', 'Club erfolgreich aktualisiert.');
 
         } catch (\Exception $e) {
             DB::rollBack();
             report($e);
-            return back()->with('error', 'Fehler beim Aktualisieren des Clubs: '.$e->getMessage())->withInput();
+            return back()->with('error', 'Fehler beim Aktualisieren des Clubs: ' . $e->getMessage())->withInput();
         }
     }
 
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy(Club $club)
+    {
+        DB::beginTransaction();
+        try {
+            // Lösche alle Galeriebilder vom Storage und aus der DB
+            foreach ($club->galleryImages as $image) {
+                if (Storage::disk('public')->exists($image->path)) {
+                    Storage::disk('public')->delete($image->path);
+                }
+                // Kein explizites $image->delete() hier, da cascadeOnDelete in der Relation helfen könnte
+                // oder wir löschen das gesamte Verzeichnis am Ende.
+            }
+            // Lösche das gesamte Verzeichnis für die Galeriebilder dieses Clubs
+            if (Storage::disk('public')->exists('club-gallery/' . $club->id)) {
+                Storage::disk('public')->deleteDirectory('club-gallery/' . $club->id);
+            }
+            // Lösche die ClubImage-Einträge (wird auch durch cascadeOnDelete in der DB-Migration erledigt)
+            $club->galleryImages()->delete();
+
+            // Lösche den Club selbst
+            $club->delete();
+
+            DB::commit();
+            return redirect()->route('admin.clubs.index')->with('success', 'Club und zugehörige Bilder erfolgreich gelöscht.');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            report($e);
+            return redirect()->route('admin.clubs.index')->with('error', 'Club konnte nicht gelöscht werden.');
+        }
+    }
 
     /**
-     * Hilfsfunktion für Validierungsregeln (DRY)
-     * JSON Validierung wird jetzt separat gemacht
+     * Validierungsregeln für Club-Formular.
      */
     protected function validationRules($ignoreId = null): array
     {
@@ -182,34 +256,33 @@ class ClubController extends Controller
             'street_address' => ['nullable', 'string', 'max:255'],
             'city' => ['nullable', 'string', 'max:255'],
             'zip_code' => ['nullable', 'string', 'max:10'],
-            'country' => ['required', 'string', 'size:2', Rule::in(array_keys(Countries::getList(app()->getLocale())))], // Prüft gegen gültige Ländercodes
+            'country' => ['required', 'string', 'size:2', Rule::in(array_keys(Countries::getList(app()->getLocale())))],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'website' => ['nullable', 'url', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
             'email' => ['nullable', 'email', 'max:255'],
-            // 'opening_hours' => ['nullable', 'json'], // Wird jetzt manuell validiert
+            // 'opening_hours_structured' etc. sind indirekt durch 'opening_hours' (string) abgedeckt
             'price_level' => ['nullable', Rule::in(['$', '$$', '$$$'])],
             'is_active' => ['nullable', 'boolean'],
             'is_verified' => ['nullable', 'boolean'],
-            // 'accessibility_features' => ['nullable', 'json'], // Wird jetzt manuell validiert
+            // 'accessibility_structured' etc. sind indirekt durch 'accessibility_features' (string) abgedeckt
             'owner_id' => ['nullable', 'exists:users,id'],
             'genres' => ['nullable', 'array'],
             'genres.*' => ['exists:genres,id'],
-            // Strukturierte Felder (nur für Request-Handling, nicht für DB)
-            'opening_hours_structured' => ['nullable', 'array'],
-            'accessibility_structured' => ['nullable', 'array'],
-            'accessibility_structured.details' => ['nullable', 'string'], // Spezifische Validierung für Details
+            'gallery_images'   => ['nullable', 'array', 'max:10'], // Max 10 Bilder auf einmal
+            'gallery_images.*' => ['image', 'mimes:jpeg,png,jpg,webp,gif,svg', 'max:5120'], // Max 5MB pro Bild
+            'delete_images' => ['nullable', 'array'], // Array von IDs der zu löschenden Bilder
+            'delete_images.*' => ['integer', 'exists:club_images,id'], // Jede ID muss existieren
         ];
     }
 
     /**
-    * Verarbeitet strukturierte Eingaben für JSON-Felder.
+    * Verarbeitet strukturierte JSON-Eingaben (Öffnungszeiten, Barrierefreiheit).
     */
-    protected function processStructuredFields(Request $request): array
+    protected function processJsonFields(Request $request): array
     {
         $output = [];
-
         // Öffnungszeiten
         $structuredHours = $request->input('opening_hours_structured', []);
         $openingHoursJson = [];
@@ -218,49 +291,25 @@ class ClubController extends Controller
             if (!empty($structuredHours[$day]['closed'])) {
                 $openingHoursJson[$day] = 'closed';
             } elseif (!empty($structuredHours[$day]['start']) && !empty($structuredHours[$day]['end'])) {
-                 // Einfache Validierung des Zeitformats (könnte verbessert werden)
-                if (preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $structuredHours[$day]['start']) &&
-                    preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $structuredHours[$day]['end'])) {
+                if (preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $structuredHours[$day]['start']) && preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $structuredHours[$day]['end'])) {
                     $openingHoursJson[$day] = $structuredHours[$day]['start'] . '-' . $structuredHours[$day]['end'];
-                } else {
-                     // Optional: Fehler werfen oder ignorieren? Ignorieren hier.
                 }
             }
         }
-         // Nur speichern, wenn Daten vorhanden sind
         $output['opening_hours'] = !empty($openingHoursJson) ? $openingHoursJson : null;
-
 
         // Barrierefreiheit
         $structuredAccess = $request->input('accessibility_structured', []);
         $accessibilityJson = [];
-        // Vordefinierte Checkboxen explizit prüfen
         $accessibilityJson['wheelchair_accessible'] = !empty($structuredAccess['wheelchair_accessible']);
         $accessibilityJson['accessible_restrooms'] = !empty($structuredAccess['accessible_restrooms']);
-        $accessibilityJson['low_counter'] = !empty($structuredAccess['low_counter']); // Beispiel für weitere Features
-        // Details Text
-        if (!empty($structuredAccess['details'])) {
-             $accessibilityJson['details'] = trim($structuredAccess['details']);
-        }
-        // Nur speichern, wenn Daten vorhanden sind (mind. ein Feature oder Details)
+        $accessibilityJson['low_counter'] = !empty($structuredAccess['low_counter']);
+        if (!empty($structuredAccess['details'])) { $accessibilityJson['details'] = trim($structuredAccess['details']); }
         $hasAccessData = $accessibilityJson['wheelchair_accessible'] || $accessibilityJson['accessible_restrooms'] || $accessibilityJson['low_counter'] || !empty($accessibilityJson['details']);
         $output['accessibility_features'] = $hasAccessData ? $accessibilityJson : null;
 
-
-        return $output; // Gibt ['opening_hours' => ..., 'accessibility_features' => ...] zurück
-    }
-
-
-     /**
-     * Validiert die aufbereiteten JSON-Daten (Arrays).
-     * Gibt das Array zurück oder fügt einen json_error hinzu.
-     */
-    protected function validateJsonData(array $data): array
-    {
-        // Hier könnten spezifischere Validierungen für die Inhalte der JSON-Arrays erfolgen
-        // z.B. ob Zeitintervalle gültig sind etc.
-        // Vorerst lassen wir es einfach, da die Struktur im processStructuredFields erzeugt wird.
-        return $data;
+        // json_error wird hier nicht mehr benötigt, da die Daten direkt im Haupt-ValidatedData Array verarbeitet werden.
+        return $output;
     }
 
     /**
@@ -268,26 +317,19 @@ class ClubController extends Controller
      */
     protected function decodeOpeningHours(?array $jsonData): array
     {
-        if (!$jsonData) return [];
-
         $structured = [];
         $days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         foreach($days as $day) {
+            $defaultEntry = ['start' => '', 'end' => '', 'closed' => false];
             if (isset($jsonData[$day])) {
                  if ($jsonData[$day] === 'closed') {
-                     $structured[$day]['closed'] = true;
-                     $structured[$day]['start'] = '';
-                     $structured[$day]['end'] = '';
+                     $structured[$day] = ['start' => '', 'end' => '', 'closed' => true];
                  } else {
                      $parts = explode('-', $jsonData[$day]);
-                     $structured[$day]['closed'] = false;
-                     $structured[$day]['start'] = $parts[0] ?? '';
-                     $structured[$day]['end'] = $parts[1] ?? '';
+                     $structured[$day] = ['start' => $parts[0] ?? '', 'end' => $parts[1] ?? '', 'closed' => false];
                  }
             } else {
-                 $structured[$day]['closed'] = false; // Default nicht geschlossen
-                 $structured[$day]['start'] = '';
-                 $structured[$day]['end'] = '';
+                 $structured[$day] = $defaultEntry;
             }
         }
         return $structured;
@@ -298,14 +340,11 @@ class ClubController extends Controller
      */
     protected function decodeAccessibility(?array $jsonData): array
     {
-        if (!$jsonData) return ['wheelchair_accessible' => false, 'accessible_restrooms' => false, 'low_counter' => false, 'details' => ''];
-
         return [
              'wheelchair_accessible' => $jsonData['wheelchair_accessible'] ?? false,
              'accessible_restrooms' => $jsonData['accessible_restrooms'] ?? false,
-             'low_counter' => $jsonData['low_counter'] ?? false, // Beispiel
+             'low_counter' => $jsonData['low_counter'] ?? false,
              'details' => $jsonData['details'] ?? '',
         ];
     }
-
 }

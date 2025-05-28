@@ -1,7 +1,11 @@
 <?php
 
+use Illuminate\Support\Facades\Route;
+
+// Standard Controller
 use App\Http\Controllers\ProfileController;
 
+// Admin Controller
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController; // Optionaler Alias
 use App\Http\Controllers\Admin\GenreController as AdminGenreController;
 use App\Http\Controllers\Admin\SubscriptionPlanController as AdminSubscriptionPlanController;
@@ -19,9 +23,8 @@ use App\Http\Controllers\Frontend\FrontendEventController;
 use App\Http\Controllers\Frontend\FrontendDjController;
 use App\Http\Controllers\Frontend\MapController;
 use App\Http\Controllers\Frontend\SearchController;
-use App\Http\Controllers\Frontend\EventBookmarkController; 
-use App\Http\Controllers\Frontend\RatingController;     
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Frontend\EventBookmarkController;
+use App\Http\Controllers\Frontend\RatingController;
 
 Route::get('/', [HomeController::class, 'index'])->name('home');
 
@@ -36,14 +39,14 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
     // --- Event Bookmark Routes ---
     Route::post('/events/{event}/bookmark-toggle', [EventBookmarkController::class, 'toggle'])->name('events.bookmark.toggle');
-    Route::get('/meine-gemerkten-events', [EventBookmarkController::class, 'index'])->name('events.bookmarked.index'); 
+    Route::get('/meine-gemerkten-events', [EventBookmarkController::class, 'index'])->name('events.bookmarked.index');
 });
 
 
 // --- Club Frontend Routes ---
-Route::get('/', [HomeController::class, 'index'])->name('home');
+// Die Home-Route ist bereits oben definiert, daher hier entfernt.
 Route::get('/clubs', [FrontendClubController::class, 'index'])->name('clubs.index');
-Route::get('/clubs/{club:slug}', [FrontendClubController::class, 'show'])->name('clubs.show'); 
+Route::get('/clubs/{club:slug}', [FrontendClubController::class, 'show'])->name('clubs.show');
 Route::post('/clubs/{club}/ratings', [RatingController::class, 'store'])
      ->middleware('verified') // Nur verifizierte User können bewerten
      ->name('ratings.store');
@@ -51,7 +54,7 @@ Route::post('/clubs/{club}/ratings', [RatingController::class, 'store'])
 
 // --- Event Frontend Routes ---
 Route::get('/events', [FrontendEventController::class, 'index'])->name('events.index');
-Route::get('/events/{event:slug}', [FrontendEventController::class, 'show'])->name('events.show'); 
+Route::get('/events/{event:slug}', [FrontendEventController::class, 'show'])->name('events.show');
 // ------------------------
 
 // --- DJ Frontend Routes ---
@@ -75,15 +78,15 @@ Route::prefix('admin')
 
         Route::get('/dashboard', function () {
             return view('admin.dashboard');
-        })->name('dashboard');
+        })->name('dashboard'); // admin.dashboard
 
-        // CRUD Routen für Genres
-        Route::resource('genres', GenreController::class);
-        Route::resource('subscription-plans', SubscriptionPlanController::class);
-        Route::resource('clubs', ClubController::class);
-        Route::resource('events', EventController::class);
-        Route::resource('users', UserController::class)->except(['create']);
-        Route::resource('djs', DjController::class);
+        // CRUD Routen mit korrekten Controller-Aliasen
+        Route::resource('genres', AdminGenreController::class);
+        Route::resource('subscription-plans', AdminSubscriptionPlanController::class);
+        Route::resource('clubs', AdminClubController::class);
+        Route::resource('events', AdminEventController::class);
+        Route::resource('users', AdminUserController::class)->except(['create']);
+        Route::resource('djs', AdminDjController::class);
 
         // Partner Application Routes
         Route::get('/partner-applications', [PartnerApplicationController::class, 'index'])->name('partner-applications.index');
