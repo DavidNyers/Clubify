@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Carbon; // Für Datums-Handling
 
+use App\Models\User;
+
 class Event extends Model
 {
     use HasFactory, HasSlug;
@@ -177,6 +179,12 @@ class Event extends Model
         }
 
          return $start->format($startFormat) . ' Uhr';
+    }
+
+    public function bookmarkedByUsers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'bookmarked_events', 'event_id', 'user_id')
+                    ->withTimestamps();
     }
 
 }

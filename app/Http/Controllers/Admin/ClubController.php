@@ -4,11 +4,16 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Club;
-use App\Models\Genre; // Benötigt für Formulare
-use App\Models\User; // Benötigt für Owner-Auswahl
+use App\Models\Genre;
+use App\Models\User;
+use App\Models\ClubImage; 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\DB; // Für Transaktionen
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
+use Intervention\Image\ImageManager;
+use Intervention\Image\Drivers\Gd\Driver as GdDriver;
 use Countries;
 
 class ClubController extends Controller
@@ -105,10 +110,10 @@ class ClubController extends Controller
 
     public function edit(Club $club)
     {
-        $genres = Genre::orderBy('name')->get();
-        $clubOwners = User::role('ClubOwner')->orderBy('name')->get();
-        $countries = Countries::getList(app()->getLocale()); // Oder 'de'
-        $club->load('genres');
+        $genres = Genre::orderBy('name')->get(['id', 'name']);
+        $clubOwners = User::role('ClubOwner')->orderBy('name')->get(['id', 'name', 'email']);
+        $countries = collect(Countries::getList(app()->getLocale()))->sort()->all();    
+        $club->load(['genres:id', 'galleryImages']);
 
         // Dekodiere JSON für das Formular
         $openingHoursStructured = $this->decodeOpeningHours($club->opening_hours);
@@ -120,8 +125,8 @@ class ClubController extends Controller
             'genres',
             'clubOwners',
             'countries',
-            'openingHoursStructured', // Für Formular-Prefill
-            'accessibilityStructured' // Für Formular-Prefill
+            'openingHoursStructured', 
+            'accessibilityStructured' 
         ));
     }
 

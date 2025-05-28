@@ -2,23 +2,25 @@
 
 use App\Http\Controllers\ProfileController;
 
-use App\Http\Controllers\Admin\GenreController;
-use App\Http\Controllers\Admin\SubscriptionPlanController;
-use App\Http\Controllers\Admin\ClubController;
-use App\Http\Controllers\Admin\EventController;
-use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\DashboardController as AdminDashboardController; // Optionaler Alias
+use App\Http\Controllers\Admin\GenreController as AdminGenreController;
+use App\Http\Controllers\Admin\SubscriptionPlanController as AdminSubscriptionPlanController;
+use App\Http\Controllers\Admin\ClubController as AdminClubController;
+use App\Http\Controllers\Admin\EventController as AdminEventController;
+use App\Http\Controllers\Admin\UserController as AdminUserController;
+use App\Http\Controllers\Admin\DjController as AdminDjController;
 use App\Http\Controllers\Admin\PartnerApplicationController;
-use App\Http\Controllers\Admin\DjController;
 use App\Http\Controllers\Admin\RatingModerationController;
 
-use App\Http\Controllers\Frontend\SearchController;
-use App\Http\Controllers\Frontend\MapController;
+// Frontend Controller
 use App\Http\Controllers\Frontend\HomeController;
 use App\Http\Controllers\Frontend\FrontendClubController;
-use App\Http\Controllers\Frontend\RatingController;
 use App\Http\Controllers\Frontend\FrontendEventController;
 use App\Http\Controllers\Frontend\FrontendDjController;
-
+use App\Http\Controllers\Frontend\MapController;
+use App\Http\Controllers\Frontend\SearchController;
+use App\Http\Controllers\Frontend\EventBookmarkController; 
+use App\Http\Controllers\Frontend\RatingController;     
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [HomeController::class, 'index'])->name('home');
@@ -28,9 +30,13 @@ Route::get('/dashboard', function () {
 })->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::middleware('auth')->group(function () {
+    // --- Profil Routes ---
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    // --- Event Bookmark Routes ---
+    Route::post('/events/{event}/bookmark-toggle', [EventBookmarkController::class, 'toggle'])->name('events.bookmark.toggle');
+    Route::get('/meine-gemerkten-events', [EventBookmarkController::class, 'index'])->name('events.bookmarked.index'); 
 });
 
 

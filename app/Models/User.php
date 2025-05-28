@@ -20,8 +20,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use App\Models\Event; // Model für Events
 use App\Models\Club;  // Model für Clubs
 use App\Models\DjProfile;  // Model für DJ
-use App\Models\Rating;
-
+use App\Models\Rating;   
 
 
 class User extends Authenticatable /* Optional: implements MustVerifyEmail */
@@ -123,6 +122,12 @@ class User extends Authenticatable /* Optional: implements MustVerifyEmail */
     public function ratings(): HasMany
     {
         return $this->hasMany(Rating::class);
+    }
+
+    public function bookmarkedEvents(): BelongsToMany
+    {
+        return $this->belongsToMany(Event::class, 'bookmarked_events', 'user_id', 'event_id')
+                    ->withTimestamps(); // Lädt created_at/updated_at von der Pivot-Tabelle (optional)
     }
 
     // Hier könnten später weitere Relationen hinzukommen, z.B.:
