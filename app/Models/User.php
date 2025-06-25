@@ -69,6 +69,11 @@ class User extends Authenticatable /* Optional: implements MustVerifyEmail */
         'partner_status_processed_at' => 'datetime',
     ];
 
+    public function checkIns()
+{
+    return $this->hasMany(CheckIn::class);
+}
+
 
     // =========================================
     // RELATIONEN (BEZIEHUNGEN ZU ANDEREN MODELS)

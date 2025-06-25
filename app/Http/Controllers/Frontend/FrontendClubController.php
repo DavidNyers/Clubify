@@ -108,6 +108,7 @@ class FrontendClubController extends Controller
         $club->load([
             'genres',
             'upcomingEvents',
+            'galleryImages',
             // Lade freigegebene Ratings und deren User direkt mit
             'ratings' => function($query) {
                 $query->where('is_approved', true)->with('user:id,name')->latest();

@@ -9,19 +9,16 @@ use App\Models\User;
 use App\Models\ClubImage; // Model für Galeriebilder
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log; // Logging für Fehler
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
-use Intervention\Image\ImageManager; // Intervention Image v3
-use Intervention\Image\Drivers\Gd\Driver as GdDriver; // GD Treiber
-// use Intervention\Image\Drivers\Imagick\Driver as ImagickDriver; // Falls Imagick genutzt wird
-use Countries; // Für die Länderliste
+use Intervention\Image\ImageManager;
+use Intervention\Image\Drivers\Gd\Driver as GdDriver;
+use Countries;
 
 class ClubController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index(Request $request)
     {
         $searchName = $request->input('search_name');
@@ -40,30 +37,22 @@ class ClubController extends Controller
         return view('admin.clubs.index', compact('clubs'));
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
     public function create()
     {
         $genres = Genre::orderBy('name')->get();
         $clubOwners = User::role('ClubOwner')->orderBy('name')->get();
         $countries = collect(Countries::getList(app()->getLocale()))->sort()->all();
-
-        // Für die strukturierte Formularanzeige der JSON-Felder (leere Werte für Create)
         $openingHoursStructured = $this->decodeOpeningHours(null);
         $accessibilityStructured = $this->decodeAccessibility(null);
 
         return view('admin.clubs.create', compact('genres', 'clubOwners', 'countries', 'openingHoursStructured', 'accessibilityStructured'));
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
         $validatedData = $request->validate($this->validationRules());
 
-        $processedJson = $this->processJsonFields($request); // JSON-Felder verarbeiten
+        $processedJson = $this->processJsonFields($request);
         $validatedData['opening_hours'] = $processedJson['opening_hours'];
         $validatedData['accessibility_features'] = $processedJson['accessibility_features'];
 
@@ -72,33 +61,13 @@ class ClubController extends Controller
 
         DB::beginTransaction();
         try {
+            // Unset gallery_images from the data array before creating the club
+            unset($validatedData['gallery_images']);
             $club = Club::create($validatedData);
 
-            // Galeriebilder verarbeiten und speichern
+            // Process and store gallery images
             if ($request->hasFile('gallery_images')) {
-                $imageManager = new ImageManager(new GdDriver());
-                foreach ($request->file('gallery_images') as $imageFile) {
-                    if ($imageFile->isValid()) {
-                        $originalName = $imageFile->getClientOriginalName();
-                        $filename = time() . '_' . uniqid() . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.webp';
-                        $directory = 'club-gallery/' . $club->id;
-                        $path = $directory . '/' . $filename;
-
-                        $img = $imageManager->read($imageFile->getRealPath());
-                        $img->resize(1200, null, function ($constraint) {
-                            $constraint->aspectRatio(); $constraint->upsize();
-                        });
-                        $encodedImage = $img->toWebp(80);
-                        Storage::disk('public')->put($path, (string) $encodedImage);
-
-                        $club->galleryImages()->create([
-                            'path' => $path,
-                            'original_name' => $originalName,
-                            'mime_type' => 'image/webp', // Da wir es zu WebP konvertieren
-                            'size' => strlen((string) $encodedImage),
-                        ]);
-                    }
-                }
+                $this->processAndStoreGalleryImages($request->file('gallery_images'), $club);
             }
 
             $club->genres()->sync($request->input('genres', []));
@@ -107,31 +76,26 @@ class ClubController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-             if (isset($club) && $club->id && Storage::disk('public')->exists('club-gallery/' . $club->id)) {
-                 Storage::disk('public')->deleteDirectory('club-gallery/' . $club->id);
-             }
-            report($e);
-            return back()->with('error', 'Fehler beim Erstellen des Clubs: ' . $e->getMessage())->withInput();
+            Log::error("Fehler beim Erstellen des Clubs: " . $e->getMessage());
+            // Clean up created directory if club creation fails after directory was made
+            if (isset($club) && $club->id && Storage::disk('public')->exists('club-gallery/' . $club->id)) {
+                Storage::disk('public')->deleteDirectory('club-gallery/' . $club->id);
+            }
+            return back()->with('error', 'Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.')->withInput();
         }
     }
 
-    /**
-     * Display the specified resource. (Usually redirects to edit for admin)
-     */
     public function show(Club $club)
     {
         return redirect()->route('admin.clubs.edit', $club);
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
     public function edit(Club $club)
     {
         $genres = Genre::orderBy('name')->get(['id', 'name']);
         $clubOwners = User::role('ClubOwner')->orderBy('name')->get(['id', 'name', 'email']);
         $countries = collect(Countries::getList(app()->getLocale()))->sort()->all();
-        $club->load(['genres:id', 'galleryImages']); // Galeriebilder laden
+        $club->load(['genres:id', 'galleryImages']);
 
         $openingHoursStructured = $this->decodeOpeningHours($club->opening_hours);
         $accessibilityStructured = $this->decodeAccessibility($club->accessibility_features);
@@ -139,13 +103,9 @@ class ClubController extends Controller
         return view('admin.clubs.edit', compact(
             'club', 'genres', 'clubOwners', 'countries',
             'openingHoursStructured', 'accessibilityStructured'
-            // $club->galleryImages ist jetzt verfügbar in der View
         ));
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, Club $club)
     {
         $validatedData = $request->validate($this->validationRules($club->id));
@@ -159,44 +119,26 @@ class ClubController extends Controller
 
         DB::beginTransaction();
         try {
+            // Unset image-related fields from the data array before updating the club
+            unset($validatedData['gallery_images']);
+            unset($validatedData['delete_images']);
             $club->update($validatedData);
 
-            // Neue Galeriebilder hinzufügen
+            // Add new gallery images
             if ($request->hasFile('gallery_images')) {
-                $imageManager = new ImageManager(new GdDriver());
-                foreach ($request->file('gallery_images') as $imageFile) {
-                    if ($imageFile->isValid()) {
-                        $originalName = $imageFile->getClientOriginalName();
-                        $filename = time() . '_' . uniqid() . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.webp';
-                        $directory = 'club-gallery/' . $club->id;
-                        $path = $directory . '/' . $filename;
-
-                        $img = $imageManager->read($imageFile->getRealPath());
-                        $img->resize(1200, null, fn($c) => $c->aspectRatio()->upsize());
-                        $encodedImage = $img->toWebp(80);
-                        Storage::disk('public')->put($path, (string) $encodedImage);
-
-                        $club->galleryImages()->create([
-                            'path' => $path,
-                            'original_name' => $originalName,
-                            'mime_type' => 'image/webp',
-                            'size' => strlen((string) $encodedImage),
-                        ]);
-                    }
-                }
+                $this->processAndStoreGalleryImages($request->file('gallery_images'), $club);
             }
 
-            // Markierte Bilder löschen
+            // Delete marked images
             if ($request->has('delete_images')) {
-                foreach ($request->input('delete_images') as $imageIdToDelete) {
-                    $imageRecord = ClubImage::find($imageIdToDelete);
-                    if ($imageRecord && $imageRecord->club_id == $club->id) { // Sicherheit
-                        if (Storage::disk('public')->exists($imageRecord->path)) {
-                            Storage::disk('public')->delete($imageRecord->path);
-                            // Optional: Thumbnails löschen, falls vorhanden und andere Pfade gespeichert
-                        }
-                        $imageRecord->delete();
-                    }
+                // Find images to delete that actually belong to this club
+                $imagesToDelete = ClubImage::where('club_id', $club->id)
+                                           ->whereIn('id', $request->input('delete_images'))
+                                           ->get();
+
+                foreach ($imagesToDelete as $imageRecord) {
+                    Storage::disk('public')->delete($imageRecord->path);
+                    $imageRecord->delete();
                 }
             }
 
@@ -206,48 +148,35 @@ class ClubController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            report($e);
-            return back()->with('error', 'Fehler beim Aktualisieren des Clubs: ' . $e->getMessage())->withInput();
+            Log::error("Fehler beim Aktualisieren des Clubs {$club->id}: " . $e->getMessage());
+            return back()->with('error', 'Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.')->withInput();
         }
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
     public function destroy(Club $club)
     {
         DB::beginTransaction();
         try {
-            // Lösche alle Galeriebilder vom Storage und aus der DB
-            foreach ($club->galleryImages as $image) {
-                if (Storage::disk('public')->exists($image->path)) {
-                    Storage::disk('public')->delete($image->path);
-                }
-                // Kein explizites $image->delete() hier, da cascadeOnDelete in der Relation helfen könnte
-                // oder wir löschen das gesamte Verzeichnis am Ende.
+            // The database cascade on delete (defined in the migration) will handle
+            // deleting the ClubImage records. We just need to delete the files.
+            $galleryPath = 'club-gallery/' . $club->id;
+            if (Storage::disk('public')->exists($galleryPath)) {
+                Storage::disk('public')->deleteDirectory($galleryPath);
             }
-            // Lösche das gesamte Verzeichnis für die Galeriebilder dieses Clubs
-            if (Storage::disk('public')->exists('club-gallery/' . $club->id)) {
-                Storage::disk('public')->deleteDirectory('club-gallery/' . $club->id);
-            }
-            // Lösche die ClubImage-Einträge (wird auch durch cascadeOnDelete in der DB-Migration erledigt)
-            $club->galleryImages()->delete();
-
-            // Lösche den Club selbst
+            
+            // Delete the club itself. Related genres pivot entries and club images records
+            // should be handled by database foreign key constraints (cascade on delete).
             $club->delete();
 
             DB::commit();
-            return redirect()->route('admin.clubs.index')->with('success', 'Club und zugehörige Bilder erfolgreich gelöscht.');
+            return redirect()->route('admin.clubs.index')->with('success', 'Club und alle zugehörigen Daten erfolgreich gelöscht.');
         } catch (\Exception $e) {
             DB::rollBack();
-            report($e);
+            Log::error("Fehler beim Löschen des Clubs {$club->id}: " . $e->getMessage());
             return redirect()->route('admin.clubs.index')->with('error', 'Club konnte nicht gelöscht werden.');
         }
     }
-
-    /**
-     * Validierungsregeln für Club-Formular.
-     */
+    
     protected function validationRules($ignoreId = null): array
     {
         return [
@@ -262,28 +191,51 @@ class ClubController extends Controller
             'website' => ['nullable', 'url', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
             'email' => ['nullable', 'email', 'max:255'],
-            // 'opening_hours_structured' etc. sind indirekt durch 'opening_hours' (string) abgedeckt
             'price_level' => ['nullable', Rule::in(['$', '$$', '$$$'])],
             'is_active' => ['nullable', 'boolean'],
             'is_verified' => ['nullable', 'boolean'],
-            // 'accessibility_structured' etc. sind indirekt durch 'accessibility_features' (string) abgedeckt
             'owner_id' => ['nullable', 'exists:users,id'],
             'genres' => ['nullable', 'array'],
             'genres.*' => ['exists:genres,id'],
-            'gallery_images'   => ['nullable', 'array', 'max:10'], // Max 10 Bilder auf einmal
-            'gallery_images.*' => ['image', 'mimes:jpeg,png,jpg,webp,gif,svg', 'max:5120'], // Max 5MB pro Bild
-            'delete_images' => ['nullable', 'array'], // Array von IDs der zu löschenden Bilder
-            'delete_images.*' => ['integer', 'exists:club_images,id'], // Jede ID muss existieren
+            'gallery_images'   => ['nullable', 'array', 'max:10'], // Max 10 images at once
+            'gallery_images.*' => ['image', 'mimes:jpeg,png,jpg,webp,gif', 'max:5120'], // Max 5MB per image
+            'delete_images' => ['nullable', 'array'],
+            'delete_images.*' => ['integer', 'exists:club_images,id'],
         ];
     }
 
-    /**
-    * Verarbeitet strukturierte JSON-Eingaben (Öffnungszeiten, Barrierefreiheit).
-    */
+    protected function processAndStoreGalleryImages(array $imageFiles, Club $club): void
+    {
+        $imageManager = new ImageManager(new GdDriver());
+        foreach ($imageFiles as $imageFile) {
+            if ($imageFile->isValid()) {
+                $originalName = $imageFile->getClientOriginalName();
+                $filename = time() . '_' . uniqid() . '_' . Str::slug(pathinfo($originalName, PATHINFO_FILENAME)) . '.webp';
+                $directory = 'club-gallery/' . $club->id;
+                $path = $directory . '/' . $filename;
+
+                $img = $imageManager->read($imageFile->getRealPath());
+                $img->resize(1200, null, function ($constraint) {
+                    $constraint->aspectRatio();
+                    $constraint->upsize();
+                });
+                $encodedImage = $img->toWebp(80);
+                Storage::disk('public')->put($path, (string) $encodedImage);
+
+                $club->galleryImages()->create([
+                    'path' => $path,
+                    'original_name' => $originalName,
+                    'mime_type' => 'image/webp',
+                    'size' => strlen((string) $encodedImage),
+                ]);
+            }
+        }
+    }
+
     protected function processJsonFields(Request $request): array
     {
         $output = [];
-        // Öffnungszeiten
+        // Opening hours
         $structuredHours = $request->input('opening_hours_structured', []);
         $openingHoursJson = [];
         $days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -298,7 +250,7 @@ class ClubController extends Controller
         }
         $output['opening_hours'] = !empty($openingHoursJson) ? $openingHoursJson : null;
 
-        // Barrierefreiheit
+        // Accessibility
         $structuredAccess = $request->input('accessibility_structured', []);
         $accessibilityJson = [];
         $accessibilityJson['wheelchair_accessible'] = !empty($structuredAccess['wheelchair_accessible']);
@@ -308,13 +260,9 @@ class ClubController extends Controller
         $hasAccessData = $accessibilityJson['wheelchair_accessible'] || $accessibilityJson['accessible_restrooms'] || $accessibilityJson['low_counter'] || !empty($accessibilityJson['details']);
         $output['accessibility_features'] = $hasAccessData ? $accessibilityJson : null;
 
-        // json_error wird hier nicht mehr benötigt, da die Daten direkt im Haupt-ValidatedData Array verarbeitet werden.
         return $output;
     }
 
-    /**
-     * Dekodiert JSON-Öffnungszeiten für das Formular.
-     */
     protected function decodeOpeningHours(?array $jsonData): array
     {
         $structured = [];
@@ -335,9 +283,6 @@ class ClubController extends Controller
         return $structured;
     }
 
-     /**
-     * Dekodiert JSON-Barrierefreiheit für das Formular.
-     */
     protected function decodeAccessibility(?array $jsonData): array
     {
         return [

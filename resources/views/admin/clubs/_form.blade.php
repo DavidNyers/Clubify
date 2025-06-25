@@ -305,6 +305,72 @@
         </div>
     </section>
 
-</div>
+    {{-- <<<<<<<<<<<<<<< HIER IST DIE ÄNDERUNG >>>>>>>>>>>>>>> --}}
+    <div class="border-t border-gray-200 dark:border-white/10 pt-6"></div>
 
-{{-- KEIN @push('styles') HIER! Styles sind jetzt global in app.css --}}
+    {{-- Sektion: Galerie --}}
+    <section>
+        <h3 class="text-base font-semibold leading-7 text-gray-900 dark:text-gray-200">Galerie</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Verwalte hier die Galeriebilder des Clubs.</p>
+
+        {{-- Anzeige der bestehenden Bilder --}}
+        @if (isset($club) && $club->galleryImages->isNotEmpty())
+            <div class="mt-4">
+                <label class="form-label">Bestehende Bilder</label>
+                <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    @foreach ($club->galleryImages as $image)
+                        {{-- Alpine.js Komponente für jedes Bild --}}
+                        <div x-data="{ isMarkedForDeletion: false }" class="relative group">
+                            {{-- Das Bild selbst mit visuellen Effekten bei Markierung --}}
+                            <img src="{{ asset('storage/' . $image->path) }}" alt="Galeriebild"
+                                class="rounded-lg object-cover w-full h-32 transition-all duration-300"
+                                :class="{ 'opacity-40 ring-4 ring-red-500 ring-offset-2 ring-offset-gray-100 dark:ring-offset-gray-800': isMarkedForDeletion }">
+
+                            {{-- Overlay, das den Löschen-Button enthält --}}
+                            <div class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-lg"
+                                :class="{ 'opacity-100': isMarkedForDeletion }">
+
+                                {{-- Der Button/Label, der die Alpine-Variable umschaltet --}}
+                                <button type="button" @click="isMarkedForDeletion = !isMarkedForDeletion"
+                                    class="flex items-center space-x-2 cursor-pointer text-white text-xs p-2 rounded-full transition-colors"
+                                    :class="isMarkedForDeletion ? 'bg-yellow-500 hover:bg-yellow-600' :
+                                        'bg-red-600 hover:bg-red-700'">
+
+                                    {{-- Versteckte Checkbox, die an die Alpine-Variable gebunden ist --}}
+                                    <input type="checkbox" name="delete_images[]" value="{{ $image->id }}"
+                                        :checked="isMarkedForDeletion" class="hidden">
+
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                                        </path>
+                                    </svg>
+
+                                    {{-- Text, der sich ändert --}}
+                                    <span x-text="isMarkedForDeletion ? 'Rückgängig' : 'Löschen'"></span>
+                                </button>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+                @error('delete_images.*')
+                    <p class="form-error mt-2">{{ $message }}</p>
+                @enderror
+            </div>
+        @endif
+
+        {{-- Upload für neue Bilder --}}
+        <div class="mt-6">
+            <label for="gallery_images" class="form-label">Neue Bilder hochladen</label>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Du kannst mehrere Bilder gleichzeitig auswählen (max.
+                10, je 5MB).</p>
+            <input type="file" name="gallery_images[]" id="gallery_images" multiple
+                class="mt-2 block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+            @error('gallery_images.*')
+                <p class="form-error mt-2">{{ $message }}</p>
+            @enderror
+        </div>
+    </section>
+
+</div>

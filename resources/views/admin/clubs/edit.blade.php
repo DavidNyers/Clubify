@@ -6,7 +6,7 @@
     </x-slot>
 
     {{-- Form direkt im Slot --}}
-    <form action="{{ route('admin.clubs.update', $club) }}" method="POST">
+    <form action="{{ route('admin.clubs.update', $club) }}" method="POST" enctype="multipart/form-data">
         @method('PUT')
         @include('admin.clubs._form', [
             'club' => $club,

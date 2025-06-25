@@ -103,6 +103,16 @@ class Club extends Model
         return $this->hasMany(Rating::class);
     }
 
+    public function galleryImages()
+    {
+        return $this->hasMany(ClubImage::class);
+    }
+
+    public function checkIns()
+{
+    return $this->hasMany(CheckIn::class);
+}
+
 
     // --- Hilfsmethoden (Beispiele) ---
 
