@@ -1,17 +1,31 @@
 # =================================================================
-# Dockerfile für eine moderne Laravel-Anwendung auf Render.com (V2)
+# Dockerfile für eine moderne Laravel-Anwendung auf Render.com (V3 - FINAL)
 # =================================================================
 
-# --- Stufe 1: Backend-Abhängigkeiten installieren ---
-FROM composer:2 as vendor
+# --- Stufe 1: Backend-Abhängigkeiten in einer korrekten PHP-Umgebung installieren ---
+# Wir starten jetzt mit dem PHP-Image und installieren Composer manuell.
+# Das stellt sicher, dass die PHP-Erweiterungen während `composer install` verfügbar sind.
+FROM php:8.2-apache as vendor
+
+# Installiere System-Abhängigkeiten und die benötigten PHP-Erweiterungen (inkl. exif!)
+RUN apt-get update && apt-get install -y \
+    libonig-dev \
+    libzip-dev \
+    libpq-dev \
+    unzip \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql bcmath mbstring zip exif
+
+# Installiere Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 COPY database/ database/
 COPY composer.json composer.lock ./
-RUN composer install --no-interaction --no-scripts --prefer-dist --optimize-autoloader --no-dev
+RUN composer install --no-interaction --no-dev --prefer-dist --optimize-autoloader
 
 
 # --- Stufe 2: Frontend-Assets bauen (mit Node.js und Vite) ---
+# Diese Stufe bleibt unverändert.
 FROM node:18 as frontend
 
 WORKDIR /app
@@ -22,37 +36,33 @@ RUN npm run build
 
 
 # --- Stufe 3: Das finale Production-Image erstellen ---
+# Wir starten wieder mit einem sauberen PHP-Image.
 FROM php:8.2-apache
 
-# Installiere System-Pakete und die von Laravel benötigten PHP-Erweiterungen.
-# HIER IST DIE KORREKTUR: 'exif' wurde zur Liste hinzugefügt.
+# Installiere die Erweiterungen erneut für die finale Laufzeitumgebung.
 RUN apt-get update && apt-get install -y \
     libonig-dev \
     libzip-dev \
     libpq-dev \
     unzip \
-    && docker-php-ext-install \
-    pdo pdo_mysql pdo_pgsql bcmath mbstring zip exif
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql bcmath mbstring zip exif
 
-# Konfiguriere Apache so, dass er auf den /public Ordner von Laravel zeigt.
+# Konfiguriere Apache
 ENV APACHE_DOCUMENT_ROOT /var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
 RUN sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
 RUN a2enmod rewrite
 
-# Setze das Arbeitsverzeichnis für den Webserver.
 WORKDIR /var/www/html
 
-# Kopiere den gesamten Anwendungscode in das Image.
+# Kopiere den Anwendungscode und die gebauten Assets aus den vorherigen Stufen.
 COPY . .
-
-# Kopiere die installierten Abhängigkeiten aus den vorherigen Stufen.
 COPY --from=vendor /app/vendor/ vendor/
 COPY --from=frontend /app/public/build/ public/build/
 
-# Setze die notwendigen Berechtigungen für Laravel.
+# Setze die notwendigen Berechtigungen.
 RUN chown -R www-data:www-data storage bootstrap/cache
 RUN chmod -R 775 storage bootstrap/cache
 
-# Gib den Port frei, auf dem Apache lauscht.
+# Gib den Port frei.
 EXPOSE 80
