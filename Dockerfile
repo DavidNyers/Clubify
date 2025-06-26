@@ -1,10 +1,8 @@
 # =================================================================
-# Dockerfile für eine moderne Laravel-Anwendung auf Render.com (V3 - FINAL)
+# Dockerfile für eine moderne Laravel-Anwendung auf Render.com (V4 - FINAL/OPTIMIZED)
 # =================================================================
 
 # --- Stufe 1: Backend-Abhängigkeiten in einer korrekten PHP-Umgebung installieren ---
-# Wir starten jetzt mit dem PHP-Image und installieren Composer manuell.
-# Das stellt sicher, dass die PHP-Erweiterungen während `composer install` verfügbar sind.
 FROM php:8.2-apache as vendor
 
 # Installiere System-Abhängigkeiten und die benötigten PHP-Erweiterungen (inkl. exif!)
@@ -21,11 +19,12 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 COPY database/ database/
 COPY composer.json composer.lock ./
-RUN composer install --no-interaction --no-dev --prefer-dist --optimize-autoloader
+
+# HIER IST DIE KORREKTUR: --no-scripts hinzugefügt, um Post-Install-Fehler zu vermeiden.
+RUN composer install --no-interaction --no-dev --prefer-dist --optimize-autoloader --no-scripts
 
 
 # --- Stufe 2: Frontend-Assets bauen (mit Node.js und Vite) ---
-# Diese Stufe bleibt unverändert.
 FROM node:18 as frontend
 
 WORKDIR /app
@@ -36,7 +35,6 @@ RUN npm run build
 
 
 # --- Stufe 3: Das finale Production-Image erstellen ---
-# Wir starten wieder mit einem sauberen PHP-Image.
 FROM php:8.2-apache
 
 # Installiere die Erweiterungen erneut für die finale Laufzeitumgebung.
@@ -59,6 +57,9 @@ WORKDIR /var/www/html
 COPY . .
 COPY --from=vendor /app/vendor/ vendor/
 COPY --from=frontend /app/public/build/ public/build/
+
+# OPTIMIERUNG: Cache die Laravel-Konfiguration und Routen für bessere Performance.
+RUN php artisan config:cache && php artisan route:cache
 
 # Setze die notwendigen Berechtigungen.
 RUN chown -R www-data:www-data storage bootstrap/cache
